@@ -1,0 +1,860 @@
+local repo = "https://raw.githubusercontent.com/deividcomsono/Obsidian/main/"
+local Library = loadstring(game:HttpGet(repo .. "Library.lua"))()
+local ThemeManager = loadstring(game:HttpGet(repo .. "addons/ThemeManager.lua"))()
+local SaveManager = loadstring(game:HttpGet(repo .. "addons/SaveManager.lua"))()
+
+local BetterOrion = loadstring(game:HttpGet(
+    "https://raw.githubusercontent.com/m1kp0/BetterOrion/refs/heads/main/Library.lua"
+))()
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+local Workspace = game:GetService("Workspace")
+local UserInputService = game:GetService("UserInputService")
+local Stats = game:GetService("Stats")
+local LocalPlayer = Players.LocalPlayer
+
+local fpsLabel, pingLabel
+local frameCount, lastUpdateTime = 0, 0
+local currentFPS, currentPing = 60, 0
+local dataPing = nil
+pcall(function() dataPing = Stats.Network.ServerStatsItem["Data Ping"] end)
+
+local mainWindow, defenseTab, targetTab, visualTab, miscTab, lagTab, settingsTab
+local defenseGroup, extraGroup, targetGroup, visualGroup, miscGroup, lagGroup, blobGroup
+
+local selectedTarget, targetPlayer
+local kickEnabled = false
+local lineToTargetEnabled = false
+local beamPart = nil
+
+local kickMode = "Normal"
+local kickHeight = 15
+local kickOffsetX = 0
+local kickOffsetZ = 0
+local kickDSLineDelay = 0.02
+
+local kickTimers = { Normal = 16, Slow = 26, Fast = 11 }
+local kickDsline = { Normal = 0.02, Slow = 0.02, Fast = 0.02 }
+
+local kickESPColor = Color3.fromRGB(255, 255, 255)
+local antiKickESPColor = Color3.fromRGB(255, 255, 255)
+
+local inputLagSpeed = 50
+local packetSpamSize = 0.1
+local shurikenPower = 5
+
+local antiKickParts, antiKickActive, pCLDDetectors, globalPCLD = {}, {}, {}, {}
+
+local gucciActive, gucciRunning, gucciConnection = false, false, nil
+local lastSeatData = { LastSeat = nil }
+
+local savedCFrame, savedPosition, isFrozen, freezeConnection, struggleConnection
+
+local rE = false
+
+local function IsPCLDDetector(object)
+    if not object:IsA("BasePart") then return false end
+    for _, name in ipairs({"partesp", "playercharacterlocationdetector"}) do
+        if string.lower(object.Name) == string.lower(name) then return true end
+    end
+    return false
+end
+
+task.spawn(function()
+    while true do
+        local newPCLD = {}
+        for _, object in ipairs(Workspace:GetDescendants()) do
+            if IsPCLDDetector(object) then table.insert(newPCLD, object) end
+        end
+        local playerCount = #Players:GetPlayers()
+        local targetCount = math.max(playerCount * 5, 10)
+        local expandedPCLD = {}
+        if #newPCLD > 0 then
+            for i = 1, targetCount do
+                local index = ((i - 1) % #newPCLD) + 1
+                table.insert(expandedPCLD, newPCLD[index])
+            end
+        end
+        globalPCLD = expandedPCLD
+        task.wait(1)
+    end
+end)
+
+local function CreateInfoBar()
+    local sg = Instance.new("ScreenGui")
+    sg.Name = "IB"
+    sg.ResetOnSpawn = false
+    sg.Parent = game:GetService("CoreGui")
+    local fr = Instance.new("Frame")
+    fr.Size = UDim2.new(0, 225, 0, 24)
+    fr.Position = UDim2.new(0.5, -112, 0, 5)
+    fr.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+    fr.BackgroundTransparency = 0.2
+    fr.BorderSizePixel = 0
+    fr.Active = true
+    fr.Draggable = true
+    fr.Parent = sg
+    Instance.new("UICorner", fr).CornerRadius = UDim.new(0, 6)
+    local stroke = Instance.new("UIStroke", fr)
+    stroke.Color = Color3.fromRGB(255, 70, 70)
+    stroke.Thickness = 1
+    local t = Instance.new("TextLabel", fr)
+    t.Size = UDim2.new(0, 65, 1, 0)
+    t.Position = UDim2.new(0, 10, 0, 0)
+    t.BackgroundTransparency = 1
+    t.Text = "losb"
+    t.TextColor3 = Color3.fromRGB(255, 70, 70)
+    t.TextSize = 13
+    t.Font = Enum.Font.SourceSansBold
+    fpsLabel = Instance.new("TextLabel", fr)
+    fpsLabel.Size = UDim2.new(0, 70, 1, 0)
+    fpsLabel.Position = UDim2.new(0, 80, 0, 0)
+    fpsLabel.BackgroundTransparency = 1
+    fpsLabel.Text = "FPS:60"
+    fpsLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+    fpsLabel.TextSize = 12
+    fpsLabel.Font = Enum.Font.SourceSans
+    pingLabel = Instance.new("TextLabel", fr)
+    pingLabel.Size = UDim2.new(0, 70, 1, 0)
+    pingLabel.Position = UDim2.new(0, 155, 0, 0)
+    pingLabel.BackgroundTransparency = 1
+    pingLabel.Text = "Ping:0"
+    pingLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+    pingLabel.TextSize = 12
+    pingLabel.Font = Enum.Font.SourceSans
+end
+
+CreateInfoBar()
+
+task.spawn(function()
+    while true do
+        if dataPing then currentPing = tonumber(dataPing:GetValueString():match("%d+")) or 0 end
+        task.wait(0.3)
+    end
+end)
+
+RunService.RenderStepped:Connect(function()
+    frameCount = frameCount + 1
+    if tick() - lastUpdateTime >= 1 then
+        currentFPS = frameCount
+        frameCount = 0
+        lastUpdateTime = tick()
+    end
+end)
+
+task.spawn(function()
+    while true do
+        task.wait(0.5)
+        if fpsLabel then fpsLabel.Text = "FPS:" .. tostring(currentFPS) end
+        if pingLabel then pingLabel.Text = "Ping:" .. tostring(currentPing) end
+    end
+end)
+
+mainWindow = Library:CreateWindow({
+    Title = "67",
+    Footer = "by dobriy",
+    NotifySide = "Right",
+    ShowCustomCursor = true
+})
+
+defenseTab = mainWindow:AddTab("Defense", "shield")
+targetTab = mainWindow:AddTab("Target", "users")
+visualTab = mainWindow:AddTab("Visual", "eye")
+miscTab = mainWindow:AddTab("Misc", "star")
+lagTab = mainWindow:AddTab("Lag", "clock")
+settingsTab = mainWindow:AddTab("Settings", "settings")
+
+defenseGroup = defenseTab:AddLeftGroupbox("Defense")
+extraGroup = defenseTab:AddLeftGroupbox("Extra")
+targetGroup = targetTab:AddLeftGroupbox("Target Settings")
+visualGroup = visualTab:AddLeftGroupbox("Visual Settings")
+miscGroup = miscTab:AddLeftGroupbox("Misc")
+lagGroup = lagTab:AddLeftGroupbox("Lag Functions")
+blobGroup = targetTab:AddRightGroupbox("Blob Method")
+
+local toyList = {
+    Coconut = "FoodCoconut", Banana = "FoodBanana", Fries = "FoodFrenchFries",
+    MeatStick = "FoodMeatStick", Poop = "PoopPile", Donut = "FoodDonut",
+    Cake = "FoodCakePink", Burger = "FoodHamburger", Pizza = "FoodPizzaCheese",
+    Hotdog = "FoodHotdog", Mushroom = "FoodMushroomPoison", Banjo = "InstrumentGuitarBanjo",
+    Violin = "InstrumentGuitarViolin", Ukulele = "InstrumentGuitarUkulele",
+    Sax = "InstrumentWoodwindSaxophone", Vuvuzela = "InstrumentBrassVuvuzela",
+    Bongos = "InstrumentDrumBongos", Mic = "InstrumentVoiceMicrophone",
+    Pepperoni = "FoodPizzaPepperoni", Piano = "InstrumentPianoMelodica",
+    Bread = "FoodBread", Egg = "FoodDippyEgg", Mayo = "FoodMayonnaise",
+    WhiteMug = "CupMugWhite", Ocarina = "InstrumentWoodwindOcarina",
+    SparklePoop = "PoopPileSparkle", BrownMug = "CupMugBrown",
+    Trumpet = "InstrumentBrassTrumpet", Snare = "InstrumentDrumSnare"
+}
+
+local toyNames = {}
+local selectedToy = toyList.Coconut
+for key in pairs(toyList) do table.insert(toyNames, key) end
+table.sort(toyNames)
+
+local function GetPlayerList()
+    local names = {}
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer then table.insert(names, player.Name) end
+    end
+    return names
+end
+
+local targetDropdown = targetGroup:AddDropdown("TargetSelect", {
+    Text = "Select Target",
+    Values = GetPlayerList(),
+    Default = 1,
+    Callback = function(value)
+        selectedTarget = value
+        targetPlayer = Players:FindFirstChild(value)
+    end
+})
+
+Players.PlayerAdded:Connect(function()
+    task.wait(0.5)
+    targetDropdown:SetValues(GetPlayerList())
+end)
+
+Players.PlayerRemoving:Connect(function()
+    task.wait(0.5)
+    targetDropdown:SetValues(GetPlayerList())
+end)
+-- ============================================================
+-- PCLD
+-- ============================================================
+
+local pcldTransparency = 0.5
+local pcldBrightness = 1
+local pcldObjects = {}
+local pcldActive = false
+local pcldOwnerCheckThread = nil
+local pcldTracer = nil
+
+local function ApplyPCLDColor()
+    return Color3.new(0.6 * pcldBrightness, 0.6 * pcldBrightness, 0.6 * pcldBrightness)
+end
+
+local function GetClosestPlayerToPCLD(position)
+    local closestPlayer, closestDist = nil, math.huge
+    for _, player in ipairs(Players:GetPlayers()) do
+        local ch = player.Character
+        if ch then
+            local root = ch:FindFirstChild("HumanoidRootPart")
+            if root then
+                local dist = (position - root.Position).Magnitude
+                if dist < closestDist then
+                    closestDist = dist
+                    closestPlayer = player
+                end
+            end
+        end
+    end
+    return closestPlayer or LocalPlayer
+end
+
+local function DestroyPCLDTracer()
+    if pcldTracer then
+        if pcldTracer.Beam and pcldTracer.Beam.Parent then pcldTracer.Beam:Destroy() end
+        if pcldTracer.BeamPart and pcldTracer.BeamPart.Parent then pcldTracer.BeamPart:Destroy() end
+        if pcldTracer.Connection then pcldTracer.Connection:Disconnect() end
+        pcldTracer = nil
+    end
+end
+
+local function CreateSinglePCLD(detector, owner)
+    if not detector or not detector.Parent then return end
+    local ownerName = owner and owner.Name or "Unknown"
+    local ownerDisplay = owner and owner.DisplayName or "Unknown"
+    local part = Instance.new("Part")
+    part.Name = "PCLD_GoodVisual_Part"
+    part.Size = detector.Size
+    part.Transparency = 1
+    part.CanCollide = false
+    part.CanQuery = false
+    part.CanTouch = false
+    part.Anchored = false
+    part.Massless = true
+    part.CFrame = detector.CFrame
+    part.Parent = Workspace
+    local bp = Instance.new("BodyPosition")
+    bp.MaxForce = Vector3.new(100000, 100000, 100000)
+    bp.D = 200
+    bp.P = 1000
+    bp.Position = detector.Position
+    bp.Parent = part
+    local bg = Instance.new("BodyGyro")
+    bg.MaxTorque = Vector3.new(100000, 100000, 100000)
+    bg.D = 200
+    bg.P = 1000
+    bg.CFrame = detector.CFrame
+    bg.Parent = part
+    local box = Instance.new("BoxHandleAdornment")
+    box.Adornee = part
+    box.AlwaysOnTop = true
+    box.ZIndex = 5
+    box.Color3 = ApplyPCLDColor()
+    box.Transparency = pcldTransparency
+    box.Size = detector.Size
+    box.Parent = game.CoreGui
+    local highlight = Instance.new("Highlight")
+    highlight.Adornee = part
+    highlight.FillColor = ApplyPCLDColor()
+    highlight.FillTransparency = pcldTransparency
+    highlight.OutlineColor = Color3.fromRGB(64, 64, 64)
+    highlight.OutlineTransparency = 0
+    highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+    highlight.Parent = part
+    local billboard = Instance.new("BillboardGui")
+    billboard.Size = UDim2.new(0, 160, 0, 46)
+    billboard.StudsOffset = Vector3.new(0, -2.5, 0)
+    billboard.AlwaysOnTop = true
+    billboard.LightInfluence = 0
+    billboard.MaxDistance = 1000
+    billboard.Parent = part
+    local label = Instance.new("TextLabel")
+    label.Size = UDim2.new(1, 0, 1, 0)
+    label.BackgroundTransparency = 1
+    label.Text = "PCLD | " .. ownerDisplay .. "\n(" .. ownerName .. ")"
+    label.TextColor3 = Color3.fromRGB(255, 255, 255)
+    label.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+    label.TextStrokeTransparency = 0
+    label.Font = Enum.Font.SourceSansBold
+    label.TextSize = 12
+    label.TextScaled = false
+    label.TextWrapped = true
+    label.Parent = billboard
+    local connection = RunService.RenderStepped:Connect(function()
+        if not detector or not detector.Parent then return end
+        if not part or not part.Parent then return end
+        bp.Position = detector.Position
+        bg.CFrame = detector.CFrame
+    end)
+    table.insert(pcldObjects, {
+        Part = part, BP = bp, BG = bg,
+        Box = box, Highlight = highlight,
+        Billboard = billboard, Label = label,
+        PCLDRef = detector, Connection = connection,
+        CurrentOwnerName = ownerName, CurrentOwnerDisplay = ownerDisplay
+    })
+end
+
+local function CreatePCLDTracer()
+    DestroyPCLDTracer()
+    local myChar = LocalPlayer.Character
+    if not myChar then return end
+    local myRoot = myChar:FindFirstChild("HumanoidRootPart") or myChar:FindFirstChild("Head")
+    if not myRoot then return end
+    local bestPart = nil
+    local bestDist = math.huge
+    for _, data in ipairs(pcldObjects) do
+        if data.Part and data.Part.Parent and data.CurrentOwnerName == LocalPlayer.Name then
+            local d = (data.Part.Position - myRoot.Position).Magnitude
+            if d < bestDist then
+                bestDist = d
+                bestPart = data.Part
+            end
+        end
+    end
+    if not bestPart then return end
+    local beamPart = Instance.new("Part")
+    beamPart.Name = "PCLD_TracerPart"
+    beamPart.Size = Vector3.new(0.1, 0.1, 1)
+    beamPart.Transparency = 1
+    beamPart.Anchored = true
+    beamPart.CanCollide = false
+    beamPart.CanQuery = false
+    beamPart.CanTouch = false
+    beamPart.Parent = Workspace
+    local at0 = Instance.new("Attachment", beamPart)
+    at0.Name = "FromChar"
+    local at1 = Instance.new("Attachment", bestPart)
+    at1.Name = "ToPCLD"
+    local beam = Instance.new("Beam")
+    beam.Attachment0 = at0
+    beam.Attachment1 = at1
+    beam.Width0 = 0.065625
+    beam.Width1 = 0.065625
+    beam.Color = ColorSequence.new(Color3.new(1, 1, 1))
+    beam.Transparency = NumberSequence.new(0, 0)
+    beam.FaceCamera = true
+    beam.Segments = 1
+    beam.Parent = beamPart
+    local connection = RunService.RenderStepped:Connect(function()
+        if not beam or not beam.Parent then return end
+        if not bestPart or not bestPart.Parent then
+            DestroyPCLDTracer()
+            return
+        end
+        local ch = LocalPlayer.Character
+        if not ch then return end
+        local root = ch:FindFirstChild("HumanoidRootPart") or ch:FindFirstChild("Head")
+        if not root then return end
+        at0.WorldPosition = root.Position
+        at1.WorldPosition = bestPart.Position
+    end)
+    pcldTracer = {
+        Beam = beam, BeamPart = beamPart,
+        At0 = at0, At1 = at1,
+        TargetPart = bestPart, Connection = connection
+    }
+end
+
+local function ClearPCLDGoodVisual()
+    for _, data in ipairs(pcldObjects) do
+        if data.Box and data.Box.Parent then data.Box:Destroy() end
+        if data.Highlight and data.Highlight.Parent then data.Highlight:Destroy() end
+        if data.Billboard and data.Billboard.Parent then data.Billboard:Destroy() end
+        if data.Part and data.Part.Parent then data.Part:Destroy() end
+        if data.Connection then data.Connection:Disconnect() end
+    end
+    pcldObjects = {}
+    DestroyPCLDTracer()
+end
+
+local function CreatePCLDGoodVisual()
+    ClearPCLDGoodVisual()
+    local pp = {}
+    for _, o in ipairs(globalPCLD) do
+        if o and o.Parent and IsPCLDDetector(o) then table.insert(pp, o) end
+    end
+    if #pp == 0 then return end
+    for _, detector in ipairs(pp) do
+        local owner = GetClosestPlayerToPCLD(detector.Position)
+        CreateSinglePCLD(detector, owner)
+    end
+    CreatePCLDTracer()
+    if pcldOwnerCheckThread then task.cancel(pcldOwnerCheckThread) end
+    pcldOwnerCheckThread = task.spawn(function()
+        while pcldActive do
+            task.wait(3)
+            if not pcldActive then break end
+            local needRecreateTracer = false
+            for _, data in ipairs(pcldObjects) do
+                if not data.PCLDRef or not data.PCLDRef.Parent then continue end
+                local newOwner = GetClosestPlayerToPCLD(data.PCLDRef.Position)
+                if newOwner and newOwner.Name ~= data.CurrentOwnerName then
+                    data.CurrentOwnerName = newOwner.Name
+                    data.CurrentOwnerDisplay = newOwner.DisplayName
+                    if data.Label and data.Label.Parent then
+                        data.Label.Text = "PCLD | " .. newOwner.DisplayName .. "\n(" .. newOwner.Name .. ")"
+                    end
+                    needRecreateTracer = true
+                end
+            end
+            if needRecreateTracer or (pcldTracer and (not pcldTracer.TargetPart or not pcldTracer.TargetPart.Parent)) then
+                CreatePCLDTracer()
+            end
+            local ownersWithPCLD = {}
+            for _, data in ipairs(pcldObjects) do
+                if data.CurrentOwnerName then ownersWithPCLD[data.CurrentOwnerName] = true end
+            end
+            local missingPlayers = {}
+            for _, plr in ipairs(Players:GetPlayers()) do
+                if not ownersWithPCLD[plr.Name] then table.insert(missingPlayers, plr) end
+            end
+            if #missingPlayers > 0 then
+                local usedDetectors = {}
+                for _, data in ipairs(pcldObjects) do
+                    if data.PCLDRef then usedDetectors[data.PCLDRef] = true end
+                end
+                local freeDetectors = {}
+                for _, o in ipairs(globalPCLD) do
+                    if o and o.Parent and IsPCLDDetector(o) and not usedDetectors[o] then
+                        table.insert(freeDetectors, o)
+                    end
+                end
+                local added = false
+                for _, plr in ipairs(missingPlayers) do
+                    if #freeDetectors == 0 then break end
+                    local detector = table.remove(freeDetectors, 1)
+                    if detector and detector.Parent then
+                        CreateSinglePCLD(detector, plr)
+                        added = true
+                    end
+                end
+                if added then CreatePCLDTracer() end
+            end
+        end
+    end)
+end
+
+task.spawn(function()
+    while true do
+        task.wait(1)
+        if not pcldActive then continue end
+        local currentCount = 0
+        for _, o in ipairs(globalPCLD) do
+            if o and o.Parent and IsPCLDDetector(o) then currentCount = currentCount + 1 end
+        end
+        local alive = 0
+        for _, d in ipairs(pcldObjects) do
+            if d.Part and d.Part.Parent then alive = alive + 1 end
+        end
+        if currentCount > #pcldObjects or (alive == 0 and currentCount > 0) then
+            CreatePCLDGoodVisual()
+        end
+    end
+end)
+
+Players.PlayerAdded:Connect(function(player)
+    player.CharacterAdded:Connect(function()
+        task.wait(0.5)
+        if pcldActive then CreatePCLDGoodVisual() end
+    end)
+end)
+
+LocalPlayer.CharacterAdded:Connect(function()
+    task.wait(0.5)
+    if pcldActive then CreatePCLDGoodVisual() end
+end)
+
+visualGroup:AddToggle("PCLD_GoodVisual", {
+    Text = "PCLD(good visual)",
+    Default = false,
+    Callback = function(value)
+        pcldActive = value
+        if value then
+            CreatePCLDGoodVisual()
+        else
+            if pcldOwnerCheckThread then task.cancel(pcldOwnerCheckThread) pcldOwnerCheckThread = nil end
+            ClearPCLDGoodVisual()
+        end
+    end
+})
+
+visualGroup:AddSlider("PCLDTransparency", {
+    Text = "PCLD Transparency",
+    Min = 0.01, Max = 1, Default = 0.5, Rounding = 2,
+    Callback = function(value)
+        pcldTransparency = value
+        for _, data in ipairs(pcldObjects) do
+            if data.Box and data.Box.Parent then data.Box.Transparency = value end
+            if data.Highlight and data.Highlight.Parent then data.Highlight.FillTransparency = value end
+        end
+    end
+})
+
+visualGroup:AddSlider("PCLDBrightness", {
+    Text = "PCLD Brightness",
+    Min = 0.01, Max = 3, Default = 1, Rounding = 2,
+    Callback = function(value)
+        pcldBrightness = value
+        local c = ApplyPCLDColor()
+        for _, data in ipairs(pcldObjects) do
+            if data.Box and data.Box.Parent then data.Box.Color3 = c end
+            if data.Highlight and data.Highlight.Parent then
+                data.Highlight.FillColor = c
+                data.Highlight.OutlineColor = c
+            end
+        end
+    end
+})
+
+visualGroup:AddToggle("ThirdPerson", {
+    Text = "Third Person",
+    Default = false,
+    Callback = function(on)
+        if on then
+            LocalPlayer.CameraMode = Enum.CameraMode.Classic
+            LocalPlayer.CameraMaxZoomDistance = 1000
+            local ch = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+            local h = ch:WaitForChild("Humanoid")
+            Workspace.CurrentCamera.CameraSubject = h
+            Workspace.CurrentCamera.CameraType = Enum.CameraType.Custom
+        else
+            LocalPlayer.CameraMode = Enum.CameraMode.LockFirstPerson
+            LocalPlayer.CameraMaxZoomDistance = 50
+        end
+    end
+})
+
+local skyBackup = nil
+local skyBrightnessSlider = 0.5
+
+local function ApplySky()
+    local Lighting = game:GetService("Lighting")
+    if not skyBackup then
+        skyBackup = {
+            ClockTime = Lighting.ClockTime, Brightness = Lighting.Brightness,
+            ExposureCompensation = Lighting.ExposureCompensation,
+            Ambient = Lighting.Ambient, OutdoorAmbient = Lighting.OutdoorAmbient,
+            GlobalShadows = Lighting.GlobalShadows
+        }
+    end
+    Lighting:ClearAllChildren()
+    local brightness = 0.582 + (29.11 - 0.582) * skyBrightnessSlider
+    Lighting.ClockTime = 17.8
+    Lighting.Brightness = brightness
+    Lighting.ExposureCompensation = 0.582
+    Lighting.Ambient = Color3.fromRGB(170, 120, 90)
+    Lighting.OutdoorAmbient = Color3.fromRGB(255, 190, 140)
+    Lighting.GlobalShadows = false
+    local sky = Instance.new("Sky")
+    sky.SunAngularSize = 12
+    sky.MoonAngularSize = 12
+    sky.StarCount = 3000
+    sky.Parent = Lighting
+    local atmosphere = Instance.new("Atmosphere")
+    atmosphere.Density = 0.35
+    atmosphere.Offset = 0.1
+    atmosphere.Color = Color3.fromRGB(255, 200, 150)
+    atmosphere.Decay = Color3.fromRGB(255, 170, 120)
+    atmosphere.Glare = 0.4
+    atmosphere.Haze = 0.6
+    atmosphere.Parent = Lighting
+    local color = Instance.new("ColorCorrectionEffect")
+    color.Brightness = brightness * 0.05
+    color.Contrast = 0.15
+    color.Saturation = 0.00928
+    color.TintColor = Color3.fromRGB(255, 190, 150)
+    color.Parent = Lighting
+    local bloom = Instance.new("BloomEffect")
+    bloom.Intensity = 0.9
+    bloom.Size = 40
+    bloom.Threshold = 0.85
+    bloom.Parent = Lighting
+    local sun = Instance.new("SunRaysEffect")
+    sun.Intensity = 0.112
+    sun.Spread = 0.6
+    sun.Parent = Lighting
+end
+
+local function UpdateSkyLive()
+    local Lighting = game:GetService("Lighting")
+    if not Lighting:FindFirstChildOfClass("Sky") then return end
+    local brightness = 0.582 + (29.11 - 0.582) * skyBrightnessSlider
+    Lighting.Brightness = brightness
+    local c = Lighting:FindFirstChildOfClass("ColorCorrectionEffect")
+    if c then c.Brightness = brightness * 0.05 end
+end
+
+local function RestoreSky()
+    local Lighting = game:GetService("Lighting")
+    Lighting:ClearAllChildren()
+    if skyBackup then
+        Lighting.ClockTime = skyBackup.ClockTime
+        Lighting.Brightness = skyBackup.Brightness
+        Lighting.ExposureCompensation = skyBackup.ExposureCompensation
+        Lighting.Ambient = skyBackup.Ambient
+        Lighting.OutdoorAmbient = skyBackup.OutdoorAmbient
+        Lighting.GlobalShadows = skyBackup.GlobalShadows
+    end
+end
+
+visualGroup:AddToggle("SkyToggle", {
+    Text = "Sky (Sunset)",
+    Default = false,
+    Callback = function(v)
+        if v then ApplySky() else RestoreSky() end
+    end
+})
+
+visualGroup:AddSlider("SkyBrightness", {
+    Text = "Sky Brightness",
+    Min = 0.01, Max = 1, Default = 0.5, Rounding = 2,
+    Callback = function(value)
+        skyBrightnessSlider = value
+        UpdateSkyLive()
+    end
+})
+
+-- ============================================================
+-- PACKET LAG LOGGER (BetterOrion window, без подсветки)
+-- ============================================================
+
+local PacketMonitor = {
+    Interval = 5,
+    TimeoutClose = 2.5,
+    Players = {},
+    Connection = nil,
+    IdleThread = nil,
+    Window = nil,
+    Paragraph = nil,
+    History = {},
+    MaxHistory = 50,
+}
+
+local function PMFindOwner(obj)
+    if not obj then return nil end
+    local o = obj:FindFirstChild("PartOwner")
+    if o and o:IsA("ObjectValue") and o.Value and o.Value:IsA("Player") then return o.Value end
+    for _, child in ipairs(obj:GetDescendants()) do
+        local o2 = child:FindFirstChild("PartOwner")
+        if o2 and o2:IsA("ObjectValue") and o2.Value and o2.Value:IsA("Player") then return o2.Value end
+    end
+    return nil
+end
+
+local function PMDetectScript(firstData)
+    local sample = string.sub(firstData, 1, 100)
+    local lower = string.lower(sample)
+    if sample:sub(1, 6):upper() == "FLOPPA" then return "TheWorst" end
+    if lower:find("polar") then return "Polar Hub" end
+    if lower:find("rsc") then return "Resonance" end
+    if lower:find("locb") then return "Locb" end
+    if lower:find("mercury") then return "Mercury" end
+    if lower:find("resonance") then return "Resonance" end
+    if sample:sub(1, 2) == "❤️" or sample:sub(1, 2) == "❤" then return "Mercury" end
+    if lower:find("00000") then return "Resonance" end
+    if lower:sub(1, 5) == "0" then return "Resonance" end
+    return "Unknown"
+end
+
+local function PMUpdateParagraph()
+    if not PacketMonitor.Paragraph then return end
+    local lines = {}
+    for _, entry in ipairs(PacketMonitor.History) do
+        table.insert(lines, entry)
+    end
+    local text = #lines > 0 and table.concat(lines, "\n") or "Ожидание пакетов..."
+    pcall(function()
+        PacketMonitor.Paragraph:SetText(text)
+    end)
+end
+
+local function PMPushHistory(text)
+    table.insert(PacketMonitor.History, text)
+    while #PacketMonitor.History > PacketMonitor.MaxHistory do
+        table.remove(PacketMonitor.History, 1)
+    end
+    PMUpdateParagraph()
+end
+
+local function PMBuildWindow()
+    if PacketMonitor.Window then
+        pcall(function() PacketMonitor.Window:Destroy() end)
+        PacketMonitor.Window = nil
+    end
+
+    local w = BetterOrion:MakeWindow({
+        Name = "Packet Lag Logger",
+        HidePremium = false,
+        SaveConfig = false,
+        IntroEnabled = false,
+        IntroText = "Packet Lag Logger",
+        IntroIcon = "rbxassetid://0",
+        Icon = "rbxassetid://0",
+        ToggleKeybind = Enum.KeyCode.RightShift,
+    })
+    PacketMonitor.Window = w
+
+    local tab = w:MakeTab({
+        Name = "Log",
+        Icon = "rbxassetid://0",
+        PremiumOnly = false,
+    })
+
+    PacketMonitor.Paragraph = tab:AddParagraph({
+        Title = "Packet Log",
+        Content = "Ожидание пакетов...",
+    })
+
+    pcall(function()
+        local main = w:FindFirstChild("Main", true)
+        if main and main:IsA("Frame") then
+            main.BackgroundColor3 = Color3.fromRGB(230, 230, 230)
+        end
+    end)
+end
+
+local function PMStartMonitor()
+    if PacketMonitor.Connection then PacketMonitor.Connection:Disconnect() end
+    local gE = ReplicatedStorage:FindFirstChild("GrabEvents")
+    if not gE then return end
+    local egl = gE:FindFirstChild("ExtendGrabLine")
+    if not egl then return end
+
+    PacketMonitor.Connection = egl.OnClientEvent:Connect(function(...)
+        local total = 0
+        local firstData = ""
+        local sender = nil
+
+        for _, arg in ipairs({...}) do
+            local t = typeof(arg)
+            if t == "string" then
+                total = total + #arg
+                if firstData == "" then firstData = string.sub(arg, 1, 100) end
+            elseif t == "Instance" and arg:IsA("Player") then
+                sender = arg
+            elseif t == "Instance" and arg:IsA("Part") then
+                local ow = PMFindOwner(arg)
+                if ow then sender = ow end
+            end
+        end
+
+        if total < 10000 or not sender then return end
+
+        local name = sender.Name
+        local data = PacketMonitor.Players[name]
+        local now = os.clock()
+
+        if not data then
+            data = {
+                lastPacketTime = 0,
+                lastNotifyTime = 0,
+                active = false,
+                size = 0,
+                script = "Unknown",
+                preview = "",
+                display = sender.DisplayName,
+            }
+            PacketMonitor.Players[name] = data
+        end
+
+        data.lastPacketTime = now
+        data.size = total
+        data.preview = string.sub(firstData, 1, 20)
+        data.script = PMDetectScript(firstData)
+        data.display = sender.DisplayName
+
+        local sizeStr = string.format("%.2f MB", total / 1048576)
+        local timeStr = os.date("%H:%M:%S")
+        local line = string.format("[%s] %s (%s) | %s | %s | %s", timeStr, name, data.display, sizeStr, data.script, data.preview)
+
+        if not data.active then
+            data.active = true
+            data.lastNotifyTime = now
+            PMPushHistory("Packet Lag Started — " .. line)
+        elseif now - data.lastNotifyTime >= PacketMonitor.Interval then
+            data.lastNotifyTime = now
+            PMPushHistory(line)
+        end
+    end)
+
+    if PacketMonitor.IdleThread then task.cancel(PacketMonitor.IdleThread) end
+    PacketMonitor.IdleThread = task.spawn(function()
+        while PacketMonitor.Connection do
+            task.wait(0.5)
+            local now = os.clock()
+            for name, data in pairs(PacketMonitor.Players) do
+                if data.active and (now - data.lastPacketTime > PacketMonitor.TimeoutClose) then
+                    data.active = false
+                    local sizeStr = string.format("%.2f MB", (data.size or 0) / 1048576)
+                    local timeStr = os.date("%H:%M:%S")
+                    local line = string.format("[%s] %s (%s) | %s | %s | %s", timeStr, name, data.display, sizeStr, data.script, data.preview)
+                    PMPushHistory("Packet Lag Stopped — " .. line)
+                end
+            end
+        end
+    end)
+end
+
+task.spawn(function()
+    task.wait(1)
+    PMBuildWindow()
+    PMStartMonitor()
+end)
+
+-- ============================================================
+-- SETTINGS / THEME / SAVE
+-- ============================================================
+
+ThemeManager:SetLibrary(Library)
+SaveManager:SetLibrary(Library)
+SaveManager:IgnoreThemeSettings()
+SaveManager:SetFolder("losb")
+SaveManager:BuildConfigSection(settingsTab)
+ThemeManager:ApplyToTab(settingsTab)
+SaveManager:LoadAutoloadConfig()
